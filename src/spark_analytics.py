@@ -1,6 +1,13 @@
 """Ingests e-commerce CSV datasets using PySpark and computes business insights."""
 
-from config import PROCESSED_DATA_DIR, RAW_DATA_DIR, logger
+from config import (
+    CATEGORY_REVENUE_OUTPUT_DIR,
+    CUSTOMER_SPEND_OUTPUT_DIR,
+    CUSTOMERS_RAW_FILE,
+    ORDERS_RAW_FILE,
+    PRODUCTS_RAW_FILE,
+    logger,
+)
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
@@ -30,12 +37,12 @@ def load_datasets(spark: SparkSession) -> tuple[DataFrame, DataFrame, DataFrame]
     Returns:
         A tuple of (customers_df, products_df, orders_df).
     """
-    logger.info("Loading raw CSV tables into Spark DataFrames...")
-    
-    cust_df = spark.read.csv(str(RAW_DATA_DIR / "customers.csv"), header=True, inferSchema=True)
-    prod_df = spark.read.csv(str(RAW_DATA_DIR / "products.csv"), header=True, inferSchema=True)
-    ord_df = spark.read.csv(str(RAW_DATA_DIR / "orders.csv"), header=True, inferSchema=True)
-    
+    logger.info("Loading raw Parquet tables into Spark DataFrames...")
+
+    cust_df = spark.read.parquet(str(CUSTOMERS_RAW_FILE))
+    prod_df = spark.read.parquet(str(PRODUCTS_RAW_FILE))
+    ord_df = spark.read.parquet(str(ORDERS_RAW_FILE))
+
     logger.info("Datasets ingested into Spark DataFrames.")
     return cust_df, prod_df, ord_df
 
