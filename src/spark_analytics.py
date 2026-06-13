@@ -1,135 +1,190 @@
-"""Ingests e-commerce CSV datasets using PySpark and computes business insights."""
+"""
+spark_analytics.py
+A PySpark analytics module for processing sales and customer performance metrics.
+"""
 
-from config import (
-    CATEGORY_REVENUE_OUTPUT_DIR,
-    CUSTOMER_SPEND_OUTPUT_DIR,
-    CUSTOMERS_RAW_FILE,
-    ORDERS_RAW_FILE,
-    PRODUCTS_RAW_FILE,
-    logger,
-)
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import functions as F
+from pyspark.sql import SparkSession, DataFrame
+import pyspark.sql.functions as F
+from pyspark.sql.window import Window
+
+from src.config import ORDERS_RAW_FILE, PRODUCTS_RAW_FILE, logger
 
 
-def create_spark_session() -> SparkSession:
-    """Instantiates a localized SparkSession worker context instance.
+class SalesAnalytics:
+    """Class containing methods for sales data processing and analytics."""
 
-    Returns:
-        An active SparkSession object.
-    """
-    logger.info("Initializing localized SparkSession container...")
-    spark = (
-        SparkSession.builder.appName("EcommerceDataAnalytics")
-        .master("local[*]")
-        .getOrCreate()
-    )
-    logger.info("SparkSession initialized successfully.")
-    return spark
-
-
-def load_datasets(spark: SparkSession) -> tuple[DataFrame, DataFrame, DataFrame]:
-    """Loads raw structured infrastructure objects into Spark DataFrame sets.
-
-    Args:
-        spark: Active context control workspace manager variable.
-
-    Returns:
-        A tuple of (customers_df, products_df, orders_df).
-    """
-    logger.info("Loading raw Parquet tables into Spark DataFrames...")
-
-    cust_df = spark.read.parquet(str(CUSTOMERS_RAW_FILE))
-    prod_df = spark.read.parquet(str(PRODUCTS_RAW_FILE))
-    ord_df = spark.read.parquet(str(ORDERS_RAW_FILE))
-
-    logger.info("Datasets ingested into Spark DataFrames.")
-    return cust_df, prod_df, ord_df
-
-
-def run_business_analysis(
-    customers: DataFrame, products: DataFrame, orders: DataFrame
-) -> tuple[DataFrame, DataFrame]:
-    """Runs data transformations to extract meaningful metrics.
-
-    Metrics include:
-      1. Total revenue breakdown by catalog product category.
-      2. Top purchasing customer groups categorized by spend levels.
-
-    Args:
-        customers: Transformed customer table dataframe.
-        products: Transformed product properties database matrix.
-        orders: Transformed customer-order log history sheets.
-
-    Returns:
-        A tuple containing (category_revenue_df, top_customers_df).
-    """
-    logger.info("Beginning execution of analytic aggregation calculations...")
-
-    # Calculate Total Sales Value per individual transaction entry line
-    joined_transactions = orders.join(products, on="product_id", how="inner").join(
-        customers, on="customer_id", how="inner"
-    )
-    
-    enriched_sales_df = joined_transactions.withColumn(
-        "total_revenue", F.col("quantity") * F.col("price")
-    )
-
-    # Insight Metric 1: Total Revenue Generated per Category Classification Segment
-    logger.info("Computing revenue summaries broken down by product group...")
-    category_insights = (
-        enriched_sales_df.groupBy("category")
-        .agg(
-            F.round(F.sum("total_revenue"), 2).alias("total_sales_revenue"),
-            F.sum("quantity").alias("units_sold_count"),
+    @staticmethod
+    def create_spark_session() -> SparkSession:
+        """
+        Configures and initializes a local SparkSession.
+        
+        Configurations applied:
+        - Local mode execution
+        - 4GB Driver memory
+        - Adaptive Query Execution (AQE) enabled
+        - Kryo Serialization for improved performance
+        
+        Returns:
+            SparkSession: The active Spark session.
+        """
+        return (
+            SparkSession.builder.appName("SalesAnalytics")
+            .master("local[*]")
+            .config("spark.driver.memory", "4g")
+            .config("spark.sql.adaptive.enabled", "true")
+            .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+            .getOrCreate()
         )
-        .orderBy(F.desc("total_sales_revenue"))
-    )
 
-    # Insight Metric 2: High-Value Customer VIP Tier Group List
-    logger.info("Compiling client valuation summary table data matrices...")
-    customer_insights = (
-        enriched_sales_df.groupBy("customer_id", "name", "country")
-        .agg(F.round(F.sum("total_revenue"), 2).alias("aggregate_customer_spend"))
-        .orderBy(F.desc("aggregate_customer_spend"))
-    )
+    @staticmethod
+    def load_parquet(spark: SparkSession, path: str) -> DataFrame:
+        """
+        Loads data from a Parquet file into a DataFrame.
+        
+        Args:
+            spark (SparkSession): The active Spark session.
+            path (str): Path to the Parquet file or directory.
+            
+        Returns:
+            DataFrame: The loaded PySpark DataFrame.
+        """
+        return spark.read.parquet(path)
 
-    return category_insights, customer_insights
+    @staticmethod
+    def top_customers_by_revenue(
+        orders_df: DataFrame, products_df: DataFrame, n: int = 10
+    ) -> DataFrame:
+        """
+        Calculates the total spend per customer and returns the top N customers.
+        
+        Assumes orders_df has 'product_id', 'customer_id', and 'quantity'.
+        Assumes products_df has 'product_id' and 'price'.
+        
+        Args:
+            orders_df (DataFrame): DataFrame of order transactions.
+            products_df (DataFrame): DataFrame of product details.
+            n (int): Number of top customers to return. Default is 10.
+            
+        Returns:
+            DataFrame: Top N customers by total revenue.
+        """
+        return (
+            orders_df.join(products_df, on="product_id", how="inner")
+            .withColumn("revenue", F.col("quantity").cast("double") * F.col("price").cast("double"))
+            .groupBy("customer_id")
+            .agg(F.round(F.sum("revenue"), 2).alias("total_revenue"))
+            .orderBy(F.col("total_revenue").desc())
+            .limit(n)
+        )
+
+    @staticmethod
+    def sales_by_category(orders_df: DataFrame, products_df: DataFrame) -> DataFrame:
+        """
+        Groups sales by product category to sum total revenue and units sold.
+        
+        Assumes orders_df has 'product_id' and 'quantity'.
+        Assumes products_df has 'product_id', 'category', and 'price'.
+        
+        Args:
+            orders_df (DataFrame): DataFrame of order transactions.
+            products_df (DataFrame): DataFrame of product details.
+            
+        Returns:
+            DataFrame: Aggregated sales metrics per category.
+        """
+        return (
+            orders_df.join(products_df, on="product_id", how="inner")
+            .withColumn("revenue", F.col("quantity") * F.col("price"))
+            .groupBy("category")
+            .agg(
+                F.sum("quantity").alias("units_sold"),
+                F.sum("revenue").alias("revenue")
+            )
+            .orderBy(F.col("revenue").desc())
+        )
+
+    @staticmethod
+    def monthly_trends(orders_df: DataFrame, products_df: DataFrame) -> DataFrame:
+        """
+        Calculates month-over-month (MoM) revenue growth percentage.
+        
+        Assumes orders_df has 'product_id', 'quantity', and 'order_date'.
+        Assumes products_df has 'product_id' and 'price'.
+        
+        Args:
+            orders_df (DataFrame): DataFrame of order transactions.
+            products_df (DataFrame): DataFrame of product details.
+            
+        Returns:
+            DataFrame: Monthly trends with MoM growth percentage.
+        """
+        # Join data, normalize order_date to timestamp, calculate revenue, and format month-year
+        daily_revenue = (
+            orders_df.join(products_df, on="product_id", how="inner")
+            .withColumn("order_date", F.to_timestamp("order_date", "yyyy-MM-dd HH:mm:ss"))
+            .withColumn("revenue", F.col("quantity") * F.col("price"))
+            .withColumn("month_year", F.date_format("order_date", "yyyy-MM"))
+        )
+
+        # Aggregate total revenue per month
+        monthly_revenue = (
+            daily_revenue.groupBy("month_year")
+            .agg(F.sum("revenue").alias("current_month_revenue"))
+        )
+
+        # Define Window specification ordered by chronological month
+        window_spec = Window.orderBy("month_year")
+
+        # Calculate Lag (previous month's revenue) and MoM Growth
+        trends_df = (
+            monthly_revenue.withColumn(
+                "prev_month_revenue", 
+                F.lag("current_month_revenue", 1).over(window_spec)
+            )
+            .withColumn(
+                "mom_growth_percentage",
+                F.when(
+                    F.col("prev_month_revenue").isNull(), 0.0
+                ).otherwise(
+                    ((F.col("current_month_revenue") - F.col("prev_month_revenue")) 
+                     / F.col("prev_month_revenue")) * 100
+                )
+            )
+            .orderBy("month_year")
+        )
+
+        return trends_df
 
 
-def main() -> None:
-    """Coordinates Spark analysis operations and writes outputs."""
-    spark = create_spark_session()
-    
-    try:
-        customers, products, orders = load_datasets(spark)
-        category_rev, top_cust = run_business_analysis(customers, products, orders)
-        
-        # Display insights in console
-        logger.info("--- CATEGORY REVENUE INSIGHTS ---")
-        category_rev.show(10, truncate=False)
-        
-        logger.info("--- TOP 10 PURCHASING CUSTOMERS ---")
-        top_cust.show(10, truncate=False)
-        
-        # Save results out to disk as Single Partitioned Coalesced CSVs
-        category_output = PROCESSED_DATA_DIR / "category_revenue"
-        customer_output = PROCESSED_DATA_DIR / "customer_spend"
-        
-        logger.info(f"Writing category revenue outputs to: {category_output}")
-        category_rev.coalesce(1).write.mode("overwrite").csv(str(category_output), header=True)
-        
-        logger.info(f"Writing customer value outputs to: {customer_output}")
-        top_cust.coalesce(1).write.mode("overwrite").csv(str(customer_output), header=True)
-        
-        logger.info("Data pipeline analytics job completed successfully.")
-        
-    except Exception as e:
-        logger.error(f"Pipeline execution failed: {str(e)}", exc_info=True)
-    finally:
-        logger.info("Shutting down active Spark Session workspace execution layer.")
-        spark.stop()
-
-
+# --- Execution Example ---
 if __name__ == "__main__":
-    main()
+    spark = SalesAnalytics.create_spark_session()
+    spark.sparkContext.setLogLevel("ERROR")
+
+    try:
+        orders_df = SalesAnalytics.load_parquet(spark, ORDERS_RAW_FILE.as_posix())
+        products_df = SalesAnalytics.load_parquet(spark, PRODUCTS_RAW_FILE.as_posix())
+
+        print(f"Loaded orders from {ORDERS_RAW_FILE}")
+        print(f"Loaded products from {PRODUCTS_RAW_FILE}\n")
+
+        print("--- Top Customers by Revenue ---")
+        top_customers = SalesAnalytics.top_customers_by_revenue(orders_df, products_df, n=10)
+        top_customers.show(truncate=False)
+
+        print("--- Sales by Category ---")
+        category_sales = SalesAnalytics.sales_by_category(orders_df, products_df)
+        category_sales.show(truncate=False)
+
+        print("--- Monthly Trends (MoM Growth %) ---")
+        monthly_trends = SalesAnalytics.monthly_trends(orders_df, products_df)
+        monthly_trends.show(truncate=False)
+
+    except Exception as exc:
+        logger.error("Failed to run analytics: %s", str(exc), exc_info=True)
+        print(
+            "Analytics execution failed. Ensure raw Parquet files exist in data/raw and "
+            "run main.py to generate them if needed."
+        )
+    finally:
+        spark.stop()
