@@ -14,10 +14,14 @@ This project is released under the MIT License.
 - Single-command analytics runner: `python run_analytics.py`
 
 ## Prerequisites
-- Python 3.11+ or 3.13
+- Python 3.10 or 3.11
 - Java JDK 8+ / 11+ for PySpark
 - pip package manager
 - Optional: a virtual environment for isolation
+- Windows users:
+  - install `winutils.exe`
+  - set `HADOOP_HOME` to a local Hadoop root containing `bin\winutils.exe`
+  - use a Spark-compatible `winutils.exe` version for PySpark 3.5.1
 
 ## Installation
 1. Clone the repository:
@@ -57,6 +61,20 @@ Execute the analytics launcher to load raw Parquet files, compute metrics, and d
 ```bash
 python run_analytics.py
 ```
+
+### Windows-specific PySpark setup
+PySpark on Windows often requires `winutils.exe` and `HADOOP_HOME` to be configured correctly. If Spark emits warnings such as "Did not find winutils.exe" or "HADOOP_HOME and hadoop.home.dir are unset", follow these steps:
+
+1. Download a `winutils.exe` binary compatible with Spark 3.5.1 / Hadoop 3.x.
+2. Create a local folder such as `C:\hadoop`.
+3. Place `winutils.exe` in `C:\hadoop\bin\winutils.exe`.
+4. Set the environment variable:
+```powershell
+setx HADOOP_HOME C:\hadoop
+```
+5. Restart your terminal and rerun the project commands.
+
+This repository's Windows test setup checks for `HADOOP_HOME` and `winutils.exe` before creating a Spark session.
 
 ### Available analytics
 - `SalesAnalytics.top_customers_by_revenue(...)`
